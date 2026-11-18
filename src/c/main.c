@@ -7,17 +7,25 @@
 #define PERSIST_CHUNK_SIZE 256
 #define PERSIST_NAME_BASE_KEY 200
 
+#define REQUEST_COUNT 3
+#define REQUEST_BADGE_WIDTH 25
+#define REQUEST_BADGE_INSET 5
+
 static Window *s_window;
+static Layer *s_chrome_layer;
 static TextLayer *s_title_layer;
-static TextLayer *s_up_layer;
-static TextLayer *s_select_layer;
-static TextLayer *s_down_layer;
+static TextLayer *s_request_layers[REQUEST_COUNT];
 static TextLayer *s_status_layer;
 
-static char s_up_text[64] = "UP: (not set)";
-static char s_select_text[64] = "OK: (not set)";
-static char s_down_text[64] = "DN: (not set)";
-static char s_status_text[64] = "";
+static char s_request_names[REQUEST_COUNT][64];
+static char s_status_text[64];
+static GColor s_status_color;
+
+static void show_status(GColor color) {
+  s_status_color = color;
+  text_layer_set_text(s_status_layer, s_status_text);
+  layer_mark_dirty(s_chrome_layer);
+}
 
 static void save_config_to_persist(const char *json) {
   int len = strlen(json) + 1; // include null terminator
@@ -58,7 +66,7 @@ static void send_button_press(int index) {
   app_message_outbox_send();
 
   snprintf(s_status_text, sizeof(s_status_text), "Sending...");
-  text_layer_set_text(s_status_layer, s_status_text);
+  show_status(PBL_IF_COLOR_ELSE(GColorDukeBlue, GColorWhite));
 }
 
 static void up_click_handler(ClickRecognizerRef recognizer, void *context) {
@@ -79,35 +87,25 @@ static void click_config_provider(void *context) {
   window_single_click_subscribe(BUTTON_ID_DOWN, down_click_handler);
 }
 
+static void display_request_name(int index) {
+  TextLayer *layer = s_request_layers[index];
+  const char *name = s_request_names[index];
+  text_layer_set_text(layer, name[0] ? name : "Not set");
+  text_layer_set_text_color(layer, name[0] ? GColorBlack
+    : PBL_IF_COLOR_ELSE(GColorDarkGray, GColorBlack));
+}
+
 static void update_request_name(int index, const char *name) {
-  char *buf;
-  TextLayer *layer;
-  const char *prefix;
-
-  switch (index) {
-    case 0: buf = s_up_text; layer = s_up_layer; prefix = "UP: "; break;
-    case 1: buf = s_select_text; layer = s_select_layer; prefix = "OK: "; break;
-    case 2: buf = s_down_text; layer = s_down_layer; prefix = "DN: "; break;
-    default: return;
-  }
-
-  if (name && strlen(name) > 0) {
-    snprintf(buf, 64, "%s%s", prefix, name);
-  } else {
-    snprintf(buf, 64, "%s(not set)", prefix);
-  }
-  text_layer_set_text(layer, buf);
+  snprintf(s_request_names[index], sizeof(s_request_names[index]), "%s", name);
+  display_request_name(index);
 }
 
 static void load_persisted_names(void) {
-  const char *prefixes[] = {"UP: ", "OK: ", "DN: "};
-  char *bufs[] = {s_up_text, s_select_text, s_down_text};
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < REQUEST_COUNT; i++) {
     if (persist_exists(PERSIST_NAME_BASE_KEY + i)) {
-      char name[64];
-      persist_read_string(PERSIST_NAME_BASE_KEY + i, name, sizeof(name));
-      if (strlen(name) > 0) {
-        snprintf(bufs[i], 64, "%s%s", prefixes[i], name);
+      if (persist_read_string(PERSIST_NAME_BASE_KEY + i, s_request_names[i],
+                             sizeof(s_request_names[i])) < 0) {
+        s_request_names[i][0] = '\0';
       }
     }
   }
@@ -159,77 +157,114 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
     if (success->value->int32) {
       snprintf(s_status_text, sizeof(s_status_text), "OK (%d)", (int)status->value->int32);
       vibes_short_pulse();
+      show_status(PBL_IF_COLOR_ELSE(GColorDarkGreen, GColorWhite));
     } else {
       snprintf(s_status_text, sizeof(s_status_text), "Failed (%d)", (int)status->value->int32);
       vibes_double_pulse();
+      show_status(PBL_IF_COLOR_ELSE(GColorDarkCandyAppleRed, GColorWhite));
     }
-    text_layer_set_text(s_status_layer, s_status_text);
   }
 }
 
 static void inbox_dropped_handler(AppMessageResult reason, void *context) {
   snprintf(s_status_text, sizeof(s_status_text), "Msg dropped");
-  text_layer_set_text(s_status_layer, s_status_text);
+  show_status(PBL_IF_COLOR_ELSE(GColorDarkCandyAppleRed, GColorWhite));
 }
 
 static void outbox_failed_handler(DictionaryIterator *iter, AppMessageResult reason, void *context) {
   snprintf(s_status_text, sizeof(s_status_text), "Send failed");
-  text_layer_set_text(s_status_layer, s_status_text);
+  show_status(PBL_IF_COLOR_ELSE(GColorDarkCandyAppleRed, GColorWhite));
 }
 
-static TextLayer *create_text_layer(GRect bounds, GFont font, GTextAlignment align) {
-  TextLayer *layer = text_layer_create(bounds);
+static GRect request_frame(GRect bounds, int index) {
+  bool tall = bounds.size.h > 180;
+  int x = PBL_IF_ROUND_ELSE(21, tall ? 14 : 8);
+  int y = PBL_IF_ROUND_ELSE(43, tall ? 50 : 37);
+  int height = tall ? 36 : 28;
+  int gap = tall ? 8 : 5;
+  return GRect(x, y + index * (height + gap), bounds.size.w - 2 * x, height);
+}
+
+static GRect status_frame(GRect bounds) {
+  int width = PBL_IF_ROUND_ELSE(98, 112);
+  int bottom_inset = PBL_IF_ROUND_ELSE(35, 30);
+  return GRect((bounds.size.w - width) / 2, bounds.size.h - bottom_inset, width, 22);
+}
+
+static void draw_chrome(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+  const char *buttons[REQUEST_COUNT] = {"UP", "OK", "DN"};
+  GFont badge_font = fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD);
+
+  for (int i = 0; i < REQUEST_COUNT; i++) {
+    GRect row = request_frame(bounds, i);
+    GRect badge = GRect(row.origin.x + row.size.w - REQUEST_BADGE_WIDTH - REQUEST_BADGE_INSET,
+                        row.origin.y + (row.size.h - 18) / 2, REQUEST_BADGE_WIDTH, 18);
+    graphics_context_set_fill_color(ctx, GColorWhite);
+    graphics_fill_rect(ctx, row, 6, GCornersAll);
+    graphics_context_set_fill_color(ctx, PBL_IF_COLOR_ELSE(GColorOxfordBlue, GColorBlack));
+    graphics_fill_rect(ctx, badge, 3, GCornersAll);
+    graphics_context_set_text_color(ctx, GColorWhite);
+    graphics_draw_text(ctx, buttons[i], badge_font, grect_inset(badge, GEdgeInsets(0, 0, 1, 0)),
+                       GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+  }
+
+  if (s_status_text[0]) {
+    graphics_context_set_fill_color(ctx, s_status_color);
+    graphics_fill_rect(ctx, status_frame(bounds), 11, GCornersAll);
+  }
+}
+
+static TextLayer *create_text_layer(Layer *parent, GRect frame, GFont font,
+                                    GColor color, GTextAlignment align) {
+  TextLayer *layer = text_layer_create(frame);
   text_layer_set_background_color(layer, GColorClear);
-  text_layer_set_text_color(layer, GColorWhite);
+  text_layer_set_text_color(layer, color);
   text_layer_set_font(layer, font);
   text_layer_set_text_alignment(layer, align);
+  text_layer_set_overflow_mode(layer, GTextOverflowModeTrailingEllipsis);
+  layer_add_child(parent, text_layer_get_layer(layer));
   return layer;
 }
 
 static void window_load(Window *window) {
   Layer *root = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(root);
-  int w = bounds.size.w;
-
+  bool tall = bounds.size.h > 180;
   GFont title_font = fonts_get_system_font(FONT_KEY_BITHAM_30_BLACK);
-  GFont body_font = fonts_get_system_font(FONT_KEY_GOTHIC_24);
-  GFont status_font = fonts_get_system_font(FONT_KEY_GOTHIC_18);
+  GFont request_font = fonts_get_system_font(tall ? FONT_KEY_GOTHIC_24_BOLD : FONT_KEY_GOTHIC_18_BOLD);
+  GFont status_font = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
 
-  int y_start = PBL_IF_ROUND_ELSE(16, 4);
-  int row_h = 30;
-  int pad = PBL_IF_ROUND_ELSE(30, 8);
+  s_chrome_layer = layer_create(bounds);
+  layer_set_update_proc(s_chrome_layer, draw_chrome);
+  layer_add_child(root, s_chrome_layer);
 
-  // Title
-  s_title_layer = create_text_layer(GRect(0, y_start, w, 36), title_font, GTextAlignmentCenter);
-  text_layer_set_text(s_title_layer, "fetch");
-  layer_add_child(root, text_layer_get_layer(s_title_layer));
+  int title_y = PBL_IF_ROUND_ELSE(7, tall ? 11 : 2);
+  s_title_layer = create_text_layer(root, GRect(0, title_y, bounds.size.w, 35),
+                                    title_font, GColorWhite, GTextAlignmentCenter);
+  text_layer_set_text(s_title_layer, "Fetch");
 
-  // Request rows
-  int row_y = y_start + 40;
-  s_up_layer = create_text_layer(GRect(pad, row_y, w - pad * 2, row_h), body_font, GTextAlignmentLeft);
-  text_layer_set_text(s_up_layer, s_up_text);
-  layer_add_child(root, text_layer_get_layer(s_up_layer));
+  int name_height = tall ? 27 : 21;
+  for (int i = 0; i < REQUEST_COUNT; i++) {
+    GRect row = request_frame(bounds, i);
+    GRect label = GRect(row.origin.x + 8, row.origin.y + (row.size.h - name_height) / 2,
+                        row.size.w - 8 - REQUEST_BADGE_WIDTH - 2 * REQUEST_BADGE_INSET, name_height);
+    s_request_layers[i] = create_text_layer(root, label, request_font, GColorBlack, GTextAlignmentLeft);
+    display_request_name(i);
+  }
 
-  s_select_layer = create_text_layer(GRect(pad, row_y + row_h, w - pad * 2, row_h), body_font, GTextAlignmentLeft);
-  text_layer_set_text(s_select_layer, s_select_text);
-  layer_add_child(root, text_layer_get_layer(s_select_layer));
-
-  s_down_layer = create_text_layer(GRect(pad, row_y + row_h * 2, w - pad * 2, row_h), body_font, GTextAlignmentLeft);
-  text_layer_set_text(s_down_layer, s_down_text);
-  layer_add_child(root, text_layer_get_layer(s_down_layer));
-
-  // Status bar
-  s_status_layer = create_text_layer(GRect(pad, row_y + row_h * 3 + 4, w - pad * 2, 22), status_font, GTextAlignmentCenter);
+  s_status_layer = create_text_layer(root, status_frame(bounds), status_font,
+                                     PBL_IF_COLOR_ELSE(GColorWhite, GColorBlack), GTextAlignmentCenter);
   text_layer_set_text(s_status_layer, s_status_text);
-  layer_add_child(root, text_layer_get_layer(s_status_layer));
 }
 
 static void window_unload(Window *window) {
   text_layer_destroy(s_title_layer);
-  text_layer_destroy(s_up_layer);
-  text_layer_destroy(s_select_layer);
-  text_layer_destroy(s_down_layer);
+  for (int i = 0; i < REQUEST_COUNT; i++) {
+    text_layer_destroy(s_request_layers[i]);
+  }
   text_layer_destroy(s_status_layer);
+  layer_destroy(s_chrome_layer);
 }
 
 static void init(void) {
@@ -244,7 +279,7 @@ static void init(void) {
 
   // Create window
   s_window = window_create();
-  window_set_background_color(s_window, GColorBlack);
+  window_set_background_color(s_window, PBL_IF_COLOR_ELSE(GColorOxfordBlue, GColorBlack));
   window_set_click_config_provider(s_window, click_config_provider);
   window_set_window_handlers(s_window, (WindowHandlers) {
     .load = window_load,
