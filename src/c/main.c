@@ -10,8 +10,10 @@
 #define REQUEST_COUNT 3
 #define REQUEST_BADGE_WIDTH 20
 #define REQUEST_BADGE_INSET 5
+#define IDLE_TIMEOUT_MS (3 * 60 * 1000)
 
 static Window *s_window;
+static AppTimer *s_idle_timer;
 static Layer *s_chrome_layer;
 static TextLayer *s_title_layer;
 static TextLayer *s_request_layers[REQUEST_COUNT];
@@ -19,6 +21,18 @@ static TextLayer *s_status_layer;
 
 static char s_request_names[REQUEST_COUNT][64];
 static char s_status_text[64];
+
+static void idle_timeout(void *context) {
+  s_idle_timer = NULL;
+  window_stack_remove(s_window, true);
+}
+
+static void restart_idle_timer(void) {
+  if (s_idle_timer && app_timer_reschedule(s_idle_timer, IDLE_TIMEOUT_MS)) {
+    return;
+  }
+  s_idle_timer = app_timer_register(IDLE_TIMEOUT_MS, idle_timeout, NULL);
+}
 
 static void show_status(GColor background) {
   window_set_background_color(s_window, PBL_IF_COLOR_ELSE(background, GColorBlack));
@@ -57,6 +71,8 @@ static bool load_config_from_persist(char *buf, int buf_size) {
 
 
 static void send_button_press(int index) {
+  restart_idle_timer();
+
   DictionaryIterator *iter;
   AppMessageResult result = app_message_outbox_begin(&iter);
   if (result != APP_MSG_OK) return;
@@ -267,9 +283,15 @@ static void window_load(Window *window) {
 
   s_status_layer = create_text_layer(root, status_frame(bounds), status_font, GColorBlack, GTextAlignmentCenter);
   text_layer_set_text(s_status_layer, s_status_text);
+  restart_idle_timer();
 }
 
 static void window_unload(Window *window) {
+  if (s_idle_timer) {
+    app_timer_cancel(s_idle_timer);
+    s_idle_timer = NULL;
+  }
+
   text_layer_destroy(s_title_layer);
   for (int i = 0; i < REQUEST_COUNT; i++) {
     text_layer_destroy(s_request_layers[i]);
