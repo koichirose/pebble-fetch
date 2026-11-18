@@ -194,9 +194,9 @@ static void outbox_failed_handler(DictionaryIterator *iter, AppMessageResult rea
 static GRect request_frame(GRect bounds, int index) {
   bool tall = bounds.size.h > 180;
   int x = PBL_IF_ROUND_ELSE(21, tall ? 14 : 8);
-  int y = PBL_IF_ROUND_ELSE(40, tall ? 44 : 34);
-  int height = tall ? 40 : 30;
-  int gap = tall ? 8 : 4;
+  int y = PBL_IF_ROUND_ELSE(50, tall ? 44 : 38);
+  int height = PBL_IF_ROUND_ELSE(28, tall ? 40 : 30);
+  int gap = tall ? 8 : 3;
   return GRect(x, y + index * (height + gap), bounds.size.w - 2 * x, height);
 }
 
@@ -259,7 +259,7 @@ static void window_load(Window *window) {
   Layer *root = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(root);
   bool tall = bounds.size.h > 180;
-  GFont title_font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  GFont title_font = fonts_get_system_font(FONT_KEY_BITHAM_30_BLACK);
   GFont request_font = fonts_get_system_font(tall ? FONT_KEY_GOTHIC_28_BOLD : FONT_KEY_GOTHIC_24_BOLD);
   GFont status_font = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
 
@@ -267,8 +267,8 @@ static void window_load(Window *window) {
   layer_set_update_proc(s_chrome_layer, draw_chrome);
   layer_add_child(root, s_chrome_layer);
 
-  int title_y = PBL_IF_ROUND_ELSE(11, tall ? 12 : 5);
-  s_title_layer = create_text_layer(root, GRect(0, title_y, bounds.size.w, 29),
+  int title_y = PBL_IF_ROUND_ELSE(16, 4);
+  s_title_layer = create_text_layer(root, GRect(0, title_y, bounds.size.w, 36),
                                     title_font, GColorWhite, GTextAlignmentCenter);
   text_layer_set_text(s_title_layer, "fetch");
 
