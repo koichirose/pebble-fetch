@@ -81,7 +81,7 @@ static void send_button_press(int index) {
   app_message_outbox_send();
 
   snprintf(s_status_text, sizeof(s_status_text), "Sending...");
-  show_status(GColorOxfordBlue);
+  show_status(GColorBlack);
 }
 
 static void up_click_handler(ClickRecognizerRef recognizer, void *context) {
@@ -172,7 +172,7 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
     if (success->value->int32) {
       snprintf(s_status_text, sizeof(s_status_text), "OK (%d)", (int)status->value->int32);
       vibes_short_pulse();
-      show_status(GColorDarkGreen);
+      show_status(GColorIslamicGreen);
     } else {
       snprintf(s_status_text, sizeof(s_status_text), "Failed (%d)", (int)status->value->int32);
       vibes_double_pulse();
@@ -312,7 +312,7 @@ static void init(void) {
 
   // Create window
   s_window = window_create();
-  window_set_background_color(s_window, PBL_IF_COLOR_ELSE(GColorOxfordBlue, GColorBlack));
+  window_set_background_color(s_window, GColorBlack);
   window_set_click_config_provider(s_window, click_config_provider);
   window_set_window_handlers(s_window, (WindowHandlers) {
     .load = window_load,
